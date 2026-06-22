@@ -1,30 +1,39 @@
 import numpy as np
 from math import erfc, sqrt, exp, pi
+from typing import Callable, TypedDict
+
+
+class BOResult(TypedDict):
+    mu: list[float]
+    sigma: list[float]
+    acq: list[float]
+    next_x: float
 
 
 # ── Kernel ──────────────────────────────────────────────────────────────────
-def rbf_kernel(X1, X2, length_scale, signal_var):
+def rbf_kernel(X1: np.ndarray, X2: np.ndarray,
+               length_scale: float, signal_var: float) -> np.ndarray:
     """
     RBF (squared exponential) kernel matrix.
 
     k(x, x') = signal_var * exp(-||x - x'||^2 / (2 * length_scale^2))
 
-    X1: array of shape (n, 1) or (n,)
-    X2: array of shape (m, 1) or (m,)
+    X1: array of shape (n,)
+    X2: array of shape (m,)
     Returns kernel matrix of shape (n, m).
     """
 
     X1 = np.atleast_1d(X1).ravel()
     X2 = np.atleast_1d(X2).ravel()
     sq_dists = (X1[:, None] - X2[None, :]) ** 2
-
-    # Final RBF formula
     return signal_var * np.exp(-sq_dists / (2.0 * length_scale ** 2))
 
 
 # ── GP Posterior ─────────────────────────────────────────────────────────────
 
-def gp_posterior(X_train, y_train, X_test, length_scale, signal_var, noise_var):
+def gp_posterior(X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray,
+                 length_scale: float, signal_var: float,
+                 noise_var: float) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute GP posterior mean and variance at X_test given training data.
 
@@ -37,28 +46,21 @@ def gp_posterior(X_train, y_train, X_test, length_scale, signal_var, noise_var):
     y_train = np.atleast_1d(y_train)
     X_test = np.atleast_1d(X_test)
 
-    # Given array of training x-values, X:
     # K = kernel(X, X) + σ²_n · I
-    # Covariance matrix of X points with each other
     K = rbf_kernel(X_train, X_train, length_scale, signal_var)
     K += noise_var * np.eye(len(X_train))
 
-    # Given array of testing x-values, X*:
-    # K* = kernel(X, X*): covariance between the points X and the points X*
-    # K** = kernel(X*, X*): prior variance at each X*
-    # RBF has k(x*, x*) = signal_var * e^0 = signal_var, so diagonal is constant
+    # K* = kernel(X, X*);  K** diagonal = signal_var for RBF
     k_star = rbf_kernel(X_train, X_test, length_scale, signal_var)  # (n, m)
     k_starstar_diag = signal_var * np.ones(len(X_test))  # (m,)
 
-    # Cholesky decomposition: L s.t. L @ L.T = K
-    L = np.linalg.cholesky(K)
-    # Compute K⁻¹ y using Cholesky decomposition
+    L = np.linalg.cholesky(K)  # L @ L.T = K
     alpha = np.linalg.solve(L.T, np.linalg.solve(L, y_train))
     # posterior mean = k*ᵀ K⁻¹ y
     mu = k_star.T @ alpha  # (m,)
 
     v = np.linalg.solve(L, k_star)  # (n, m)
-    # posterior variance = k** − k*ᵀ K⁻¹ k* 
+    # posterior variance = k** − k*ᵀ K⁻¹ k*
     var = k_starstar_diag - np.sum(v ** 2, axis=0)  # (m,)
     # clip numerical negatives
     var = np.maximum(var, 0.0)
@@ -69,7 +71,7 @@ def gp_posterior(X_train, y_train, X_test, length_scale, signal_var, noise_var):
 
 # ── Acquisition Functions ────────────────────────────────────────────────────
 
-def acquisition_ucb(mu, sigma, kappa):
+def acquisition_ucb(mu: np.ndarray, sigma: np.ndarray, kappa: float) -> np.ndarray:
     """
     Upper Confidence Bound acquisition.
 
@@ -81,17 +83,18 @@ def acquisition_ucb(mu, sigma, kappa):
     return mu + kappa * sigma
 
 
-def _standard_normal_cdf(z):
+def _standard_normal_cdf(z: float) -> float:
     """Phi(z)."""
     return 0.5 * erfc(-z / sqrt(2.0))
 
 
-def _standard_normal_pdf(z):
+def _standard_normal_pdf(z: float) -> float:
     """phi(z)."""
     return exp(-0.5 * z * z) / sqrt(2.0 * pi)
 
 
-def acquisition_ei(mu, sigma, y_best, xi=0.01):
+def acquisition_ei(mu: np.ndarray, sigma: np.ndarray,
+                   y_best: float, xi: float = 0.01) -> np.ndarray:
     """
     Expected Improvement acquisition.
 
@@ -126,9 +129,11 @@ def acquisition_ei(mu, sigma, y_best, xi=0.01):
 
 # ── Acquisition Maximization ─────────────────────────────────────────────────
 
-def maximize_acquisition(X_grid, mu, sigma, acq_type, kappa, xi, y_best):
+def maximize_acquisition(X_grid: np.ndarray, mu: np.ndarray, sigma: np.ndarray,
+                         acq_type: str, kappa: float, xi: float,
+                         y_best: float) -> tuple[float, np.ndarray]:
     """
-    Return the index of the grid point that maximizes the acquisition function.
+    Return the maximizing x value and full acquisition curve.
 
     X_grid: (m,) grid of candidate x values
     acq_type: 'ucb' or 'ei'
@@ -148,17 +153,17 @@ def maximize_acquisition(X_grid, mu, sigma, acq_type, kappa, xi, y_best):
 
 # ── Target Functions ─────────────────────────────────────────────────────────
 
-def target_sine(x):
+def target_sine(x: float) -> float:
     """sin(6*pi*x) — simple oscillating function on [0, 1]."""
     return float(np.sin(6.0 * pi * x))
 
 
-def target_bumpy(x):
+def target_bumpy(x: float) -> float:
     """sin(6*pi*x) + 0.5*sin(14*pi*x) — higher-frequency bumps."""
     return float(np.sin(6.0 * pi * x) + 0.5 * np.sin(14.0 * pi * x))
 
 
-def target_multimodal(x):
+def target_multimodal(x: float) -> float:
     """Sum of three Gaussian bumps — multiple local optima."""
     centers = [0.2, 0.55, 0.85]
     heights = [1.0, 0.8, 1.2]
@@ -167,12 +172,12 @@ def target_multimodal(x):
                      for c, h, w in zip(centers, heights, widths)))
 
 
-def target_easy(x):
+def target_easy(x: float) -> float:
     """Single wide Gaussian peak — BO converges in a few steps."""
     return float(np.exp(-0.5 * ((x - 0.6) / 0.2) ** 2))
 
 
-TARGET_FUNCTIONS = {
+TARGET_FUNCTIONS: dict[str, Callable[[float], float]] = {
     'sine': target_sine,
     'bumpy': target_bumpy,
     'multimodal': target_multimodal,
@@ -182,9 +187,9 @@ TARGET_FUNCTIONS = {
 
 # ── Full BO Step ─────────────────────────────────────────────────────────────
 
-def bo_step(X_train, y_train, X_grid,
-            length_scale, signal_var, noise_var,
-            acq_type, kappa, xi):
+def bo_step(X_train: np.ndarray, y_train: np.ndarray, X_grid: np.ndarray,
+            length_scale: float, signal_var: float, noise_var: float,
+            acq_type: str, kappa: float, xi: float) -> BOResult:
     """
     Run one full BO step: compute GP posterior on X_grid, maximize acquisition.
 
@@ -195,8 +200,6 @@ def bo_step(X_train, y_train, X_grid,
     acq_type: 'ucb' or 'ei'
     kappa: UCB exploration weight
     xi: EI jitter
-
-    Returns dict with keys: mu, sigma, acq, next_x
     """
     mu, sigma = gp_posterior(X_train, y_train, X_grid,
                               length_scale, signal_var, noise_var)
