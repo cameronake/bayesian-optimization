@@ -4,7 +4,7 @@ An interactive Bayesian optimization implementation. A Gaussian Process surrogat
 
 I was curious to try out Bayesian optimization because it balances exploration and exploitation in a way gradient descent doesn't, and I wanted to actually conceptually understand all of the math in a way I wouldn't be able to from just watching a YouTube video. (Also, Bayesian thinking is fun to experiment with, and I didn't want to play with yet another conjugate prior/posterior.)
 
-Try out the algorithm and watch the GP posterior update in real time on the **[live demo](https://cameronake.github.io/bo-demo.html)** on my website.
+**[Live demo](https://cameronake.github.io/mcop-demo.html)**
 
 All functions for the actual Bayesian optimization process are contained in `bo.py`.
 
